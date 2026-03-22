@@ -26,6 +26,11 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "change-this-password";
 const COOKIE_SECRET = process.env.ADMIN_COOKIE_SECRET || "local-dev-secret-change-me";
 const COOKIE_NAME = "north_journal_admin";
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
+const SUPABASE_URL = String(process.env.SUPABASE_URL || "").trim();
+const SUPABASE_SERVICE_ROLE_KEY = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+const SUPABASE_POSTS_TABLE = String(process.env.SUPABASE_POSTS_TABLE || "posts").trim();
+const SUPABASE_SITE_TABLE = String(process.env.SUPABASE_SITE_TABLE || "site_content").trim();
+const DATA_PROVIDER = resolveDataProvider(process.env.DATA_PROVIDER, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 const DEFAULT_SITE = {
   siteName: "北岸手记",
@@ -144,7 +149,9 @@ bootstrap();
 async function bootstrap() {
   await ensureStorage();
   server.listen(PORT, HOST, () => {
-    console.log(`Dynamic blog is running on http://${HOST === "0.0.0.0" ? "localhost" : HOST}:${PORT}`);
+    console.log(
+      `Dynamic blog is running on http://${HOST === "0.0.0.0" ? "localhost" : HOST}:${PORT} (${DATA_PROVIDER} storage)`
+    );
   });
 }
 
@@ -466,6 +473,11 @@ function loadEnvFile() {
 }
 
 async function ensureStorage() {
+  if (DATA_PROVIDER === "supabase") {
+    await ensureSupabaseStorage();
+    return;
+  }
+
   await fsp.mkdir(DATA_DIR, { recursive: true });
 
   if (!fs.existsSync(POSTS_FILE)) {
@@ -480,15 +492,28 @@ async function ensureStorage() {
 }
 
 async function readPosts() {
+  if (DATA_PROVIDER === "supabase") {
+    return readPostsFromSupabase();
+  }
+
   const posts = await readJsonFile(POSTS_FILE, DEFAULT_POSTS);
   return Array.isArray(posts) ? posts : DEFAULT_POSTS;
 }
 
 async function savePosts(posts) {
+  if (DATA_PROVIDER === "supabase") {
+    await replacePostsInSupabase(posts);
+    return;
+  }
+
   await saveJsonFile(POSTS_FILE, posts);
 }
 
 async function readSiteConfig() {
+  if (DATA_PROVIDER === "supabase") {
+    return readSiteConfigFromSupabase();
+  }
+
   const rawSite = await readJsonFile(SITE_FILE, DEFAULT_SITE);
   return normalizeSite(rawSite);
 }
@@ -510,6 +535,121 @@ async function saveJsonFile(filePath, value) {
   const tempPath = `${filePath}.tmp`;
   await fsp.writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
   await fsp.rename(tempPath, filePath);
+}
+
+async function ensureSupabaseStorage() {
+  assertSupabaseConfigured();
+
+  const [seedSite, seedPosts] = await Promise.all([
+    readJsonFile(SEED_SITE_FILE, DEFAULT_SITE),
+    readJsonFile(SEED_POSTS_FILE, DEFAULT_POSTS)
+  ]);
+
+  const siteRows = await supabaseRequest("GET", `${SUPABASE_SITE_TABLE}?select=id,data&id=eq.1`);
+  if (!Array.isArray(siteRows) || siteRows.length === 0) {
+    await upsertSiteConfigToSupabase(normalizeSite(seedSite));
+  }
+
+  const postRows = await supabaseRequest("GET", `${SUPABASE_POSTS_TABLE}?select=id&limit=1`);
+  if (!Array.isArray(postRows) || postRows.length === 0) {
+    const initialPosts = Array.isArray(seedPosts) ? seedPosts : DEFAULT_POSTS;
+    await replacePostsInSupabase(initialPosts);
+  }
+}
+
+async function readPostsFromSupabase() {
+  const rows = await supabaseRequest("GET", `${SUPABASE_POSTS_TABLE}?select=id,data,updated_at`);
+  if (!Array.isArray(rows)) {
+    return DEFAULT_POSTS;
+  }
+
+  return rows
+    .map((row) => (row && row.data && typeof row.data === "object" ? row.data : null))
+    .filter(Boolean);
+}
+
+async function replacePostsInSupabase(posts) {
+  assertSupabaseConfigured();
+
+  const normalizedPosts = Array.isArray(posts) ? posts : [];
+  const payload = normalizedPosts.map((post) => ({
+    id: post.id,
+    data: post,
+    updated_at: post.updatedAt || new Date().toISOString()
+  }));
+
+  if (payload.length > 0) {
+    await supabaseRequest("POST", `${SUPABASE_POSTS_TABLE}?on_conflict=id`, payload, {
+      Prefer: "resolution=merge-duplicates,return=minimal"
+    });
+  }
+
+  const existingRows = await supabaseRequest("GET", `${SUPABASE_POSTS_TABLE}?select=id`);
+  const incomingIds = new Set(normalizedPosts.map((post) => post.id));
+  const staleIds = Array.isArray(existingRows)
+    ? existingRows.map((row) => row.id).filter((id) => id && !incomingIds.has(id))
+    : [];
+
+  for (const id of staleIds) {
+    await supabaseRequest("DELETE", `${SUPABASE_POSTS_TABLE}?id=eq.${encodeURIComponent(id)}`);
+  }
+}
+
+async function readSiteConfigFromSupabase() {
+  const rows = await supabaseRequest("GET", `${SUPABASE_SITE_TABLE}?select=id,data&id=eq.1`);
+  if (Array.isArray(rows) && rows[0] && rows[0].data && typeof rows[0].data === "object") {
+    return normalizeSite(rows[0].data);
+  }
+
+  return DEFAULT_SITE;
+}
+
+async function upsertSiteConfigToSupabase(site) {
+  assertSupabaseConfigured();
+
+  await supabaseRequest(
+    "POST",
+    `${SUPABASE_SITE_TABLE}?on_conflict=id`,
+    [{ id: 1, data: site, updated_at: new Date().toISOString() }],
+    { Prefer: "resolution=merge-duplicates,return=minimal" }
+  );
+}
+
+async function supabaseRequest(method, resource, body, headers = {}) {
+  assertSupabaseConfigured();
+
+  const baseUrl = SUPABASE_URL.replace(/\/+$/, "");
+  const response = await fetch(`${baseUrl}/rest/v1/${resource}`, {
+    method,
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      ...headers
+    },
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
+
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`Supabase request failed (${response.status}): ${text || response.statusText}`);
+  }
+
+  if (!text) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+function assertSupabaseConfigured() {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error("Supabase storage is enabled, but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing.");
+  }
 }
 
 function normalizeSite(rawSite) {
@@ -591,6 +731,20 @@ function normalizeContent(value) {
 
 function normalizeText(value) {
   return String(value || "").trim();
+}
+
+function resolveDataProvider(rawValue, supabaseUrl, supabaseServiceRoleKey) {
+  const normalized = String(rawValue || "").trim().toLowerCase();
+
+  if (normalized === "file" || normalized === "supabase") {
+    return normalized;
+  }
+
+  if (supabaseUrl && supabaseServiceRoleKey) {
+    return "supabase";
+  }
+
+  return "file";
 }
 
 function normalizeTags(value) {
