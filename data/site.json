@@ -1,0 +1,43 @@
+{
+  "siteName": "北岸手记",
+  "tagline": "把产品、生活与创作慢慢写成自己的节奏。",
+  "intro": "这里是我的个人网站。我会在这里记录工作复盘、项目随笔、阅读感受，以及那些值得留住的小想法。",
+  "author": {
+    "name": "林见",
+    "role": "独立开发者 / 视觉设计师",
+    "bio": "我喜欢把模糊的想法做成具体的作品，也喜欢把日常经验整理成能被反复使用的系统。",
+    "location": "上海 / Remote",
+    "email": "hello@example.com"
+  },
+  "projects": [
+    {
+      "name": "Wave Atlas",
+      "summary": "一个整理灵感、项目卡片和长期主题的知识画布，用来把零散想法串起来。",
+      "link": "#"
+    },
+    {
+      "name": "Quiet Sprint",
+      "summary": "给独立创作者准备的轻量节奏管理模板，帮助在工作和副业之间切换。",
+      "link": "#"
+    },
+    {
+      "name": "North Studio",
+      "summary": "我正在慢慢搭建的个人工作室品牌，用来承接设计、写作和数字产品实验。",
+      "link": "#"
+    }
+  ],
+  "socialLinks": [
+    {
+      "label": "GitHub",
+      "href": "https://github.com/your-name"
+    },
+    {
+      "label": "X / Twitter",
+      "href": "https://x.com/your-name"
+    },
+    {
+      "label": "Email",
+      "href": "mailto:hello@example.com"
+    }
+  ]
+}

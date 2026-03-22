@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: north-journal-blog
+    runtime: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: 10000
+      - key: DATA_DIR
+        value: /var/data
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ADMIN_COOKIE_SECRET
+        generateValue: true
+    disk:
+      name: blog-data
+      mountPath: /var/data
+      sizeGB: 5
