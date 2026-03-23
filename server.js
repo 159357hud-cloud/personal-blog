@@ -332,6 +332,29 @@ async function routeRequest(req, res) {
       return;
     }
 
+    if (req.method === "GET" && pathname === "/admin/site") {
+      const site = await readSiteConfig();
+      sendHtml(
+        res,
+        200,
+        renderSiteSettingsPage(site, {}, "", requestUrl.searchParams.get("notice") || "")
+      );
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/admin/site") {
+      const [site, form] = await Promise.all([readSiteConfig(), parseFormBody(req)]);
+
+      try {
+        const nextSite = buildSiteConfigFromForm(form, site);
+        await saveSiteConfig(nextSite);
+        redirectWithNotice(res, "/admin/site", "账号链接已更新。");
+      } catch (error) {
+        sendHtml(res, 422, renderSiteSettingsPage(site, form, error.message));
+      }
+      return;
+    }
+
     if (req.method === "GET" && pathname === "/admin/posts/new") {
       const site = await readSiteConfig();
       sendHtml(res, 200, renderEditorPage(site));
@@ -617,6 +640,17 @@ async function readSiteConfig() {
 
   const rawSite = await readJsonFile(SITE_FILE, DEFAULT_SITE);
   return normalizeSite(rawSite);
+}
+
+async function saveSiteConfig(site) {
+  const normalizedSite = normalizeSite(site);
+
+  if (DATA_PROVIDER === "supabase") {
+    await upsertSiteConfigToSupabase(normalizedSite);
+    return;
+  }
+
+  await saveJsonFile(SITE_FILE, normalizedSite);
 }
 
 async function readJsonFile(filePath, fallbackValue) {
@@ -959,12 +993,82 @@ function buildPostFromForm(form, posts, existingPost = null) {
   };
 }
 
+function buildSiteConfigFromForm(form, currentSite) {
+  const authorEmail = normalizeEmailValue(form.authorEmail);
+  const socialLinks = [];
+
+  for (let index = 0; index < 6; index += 1) {
+    const row = index + 1;
+    const label = normalizeText(form[`socialLabel${row}`]);
+    const href = normalizeSocialHrefInput(label, form[`socialHref${row}`]);
+
+    if (!label && !href) {
+      continue;
+    }
+
+    if (!label || !href) {
+      throw new Error(`第 ${row} 组社交账号需要同时填写名称和链接。`);
+    }
+
+    socialLinks.push({ label, href });
+  }
+
+  if (socialLinks.length === 0) {
+    throw new Error("请至少保留一个可用的社交账号链接。");
+  }
+
+  return {
+    ...currentSite,
+    author: {
+      ...currentSite.author,
+      email: authorEmail || currentSite.author.email
+    },
+    socialLinks
+  };
+}
+
 function normalizeContent(value) {
   return String(value || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
 }
 
 function normalizeText(value) {
   return String(value || "").trim();
+}
+
+function normalizeEmailValue(value) {
+  const email = normalizeText(value);
+
+  if (!email) {
+    return "";
+  }
+
+  return email.replace(/^mailto:/i, "");
+}
+
+function normalizeSocialHrefInput(label, value) {
+  const href = normalizeText(value);
+
+  if (!href) {
+    return "";
+  }
+
+  if (/^[a-z]+:/i.test(href)) {
+    return href;
+  }
+
+  if (label.toLowerCase() === "email" || href.includes("@")) {
+    return `mailto:${href.replace(/^mailto:/i, "")}`;
+  }
+
+  if (/^www\./i.test(href)) {
+    return `https://${href}`;
+  }
+
+  if (/^[\w.-]+\.[a-z]{2,}(?:[/?#]|$)/i.test(href)) {
+    return `https://${href}`;
+  }
+
+  return href;
 }
 
 function resolveDataProvider(rawValue, supabaseUrl, supabaseServiceRoleKey) {
@@ -1687,6 +1791,13 @@ function renderAdminDashboard(site, posts, notice) {
         </section>
 
         ${renderNotice(notice)}
+        <section class="notice-card">
+          <strong>Site Settings</strong>
+          <p>Edit your social links, email, and external accounts without touching code.</p>
+          <div class="header-actions">
+            <a class="button" href="/admin/site">Edit account links</a>
+          </div>
+        </section>
 
         <section class="admin-metrics">
           <div class="admin-card">
@@ -1759,6 +1870,92 @@ function renderAdminDashboard(site, posts, notice) {
     `,
     "admin-body"
   );
+}
+
+function renderSiteSettingsPage(site, values = {}, errorMessage = "", notice = "") {
+  const rows = buildEditableSocialRows(values, site.socialLinks, 6);
+  const authorEmail = normalizeText(values.authorEmail) || site.author.email;
+
+  return renderSimplePage(
+    site,
+    `Site Settings | ${site.siteName}`,
+    `
+      <main class="admin-wrap">
+        <section class="editor-heading">
+          <div>
+            <div class="kicker">Site Settings</div>
+            <h1>Edit social accounts and contact links</h1>
+            <p>Update GitHub, X, Email, and any other profile links here. After saving, the front page will use the new links immediately.</p>
+          </div>
+          <div class="header-actions">
+            <a class="secondary-button" href="/admin/dashboard">Back to dashboard</a>
+            <a class="ghost-button" href="/" target="_blank" rel="noreferrer">Open frontend</a>
+          </div>
+        </section>
+
+        ${renderNotice(notice)}
+        ${errorMessage ? `<section class="notice-card"><strong>Form Error</strong><p class="error-text">${escapeHtml(errorMessage)}</p></section>` : ""}
+
+        <section class="editor-layout">
+          <article class="editor-panel">
+            <form class="form-grid" method="post" action="/admin/site">
+              <div class="field">
+                <label for="authorEmail">Contact email</label>
+                <input id="authorEmail" name="authorEmail" type="email" value="${escapeHtml(authorEmail)}" placeholder="you@example.com">
+                <small>This email is used in the author card and contact entry point.</small>
+              </div>
+
+              ${rows
+                .map(
+                  (row, index) => `
+                    <div class="field-row">
+                      <div class="field">
+                        <label for="socialLabel${index + 1}">Link label ${index + 1}</label>
+                        <input id="socialLabel${index + 1}" name="socialLabel${index + 1}" type="text" value="${escapeHtml(row.label)}" placeholder="GitHub / X / Email / LinkedIn">
+                      </div>
+                      <div class="field">
+                        <label for="socialHref${index + 1}">Link URL ${index + 1}</label>
+                        <input id="socialHref${index + 1}" name="socialHref${index + 1}" type="text" value="${escapeHtml(row.href)}" placeholder="https://example.com / mailto:you@example.com">
+                      </div>
+                    </div>
+                  `
+                )
+                .join("")}
+
+              <div class="editor-actions">
+                <button class="button" type="submit">Save site settings</button>
+                <a class="secondary-button" href="/admin/dashboard">Cancel</a>
+              </div>
+            </form>
+          </article>
+
+          <aside class="editor-note">
+            <h3>Tips</h3>
+            <ul>
+              <li>Use full URLs like <code>https://github.com/159357hud-cloud</code>.</li>
+              <li>You can type a plain email address like <code>you@example.com</code>; the system will convert it to <code>mailto:</code>.</li>
+              <li>Leave unused rows empty and they will stay hidden on the frontend.</li>
+            </ul>
+          </aside>
+        </section>
+      </main>
+    `,
+    "admin-body"
+  );
+}
+
+function buildEditableSocialRows(values, currentLinks, totalRows) {
+  const rows = [];
+
+  for (let index = 0; index < totalRows; index += 1) {
+    const existing = currentLinks[index] || { label: "", href: "" };
+    rows.push({
+      label: normalizeText(values[`socialLabel${index + 1}`]) || existing.label || "",
+      href: normalizeText(values[`socialHref${index + 1}`]) || existing.href || ""
+    });
+  }
+
+  return rows;
 }
 
 function renderEditorPage(site, post = {}, errorMessage = "") {
