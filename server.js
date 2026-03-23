@@ -72,7 +72,7 @@ const DEFAULT_SITE = {
     }
   ],
   socialLinks: [
-    { label: "GitHub", href: "https://github.com/your-name" },
+    { label: "GitHub", href: "https://github.com/159357hud-cloud" },
     { label: "X / Twitter", href: "https://x.com/your-name" },
     { label: "Email", href: "mailto:hello@example.com" }
   ]
@@ -848,13 +848,41 @@ function normalizeSite(rawSite) {
     socialLinks:
       Array.isArray(site.socialLinks) && site.socialLinks.length > 0
         ? site.socialLinks
-            .map((item) => ({
-              label: normalizeText(item.label),
-              href: normalizeText(item.href) || "#"
-            }))
+            .map((item) => normalizeSocialLink(item))
             .filter((item) => item.label)
         : DEFAULT_SITE.socialLinks
   };
+}
+
+function normalizeSocialLink(item) {
+  const label = normalizeText(item?.label);
+  const href = normalizeText(item?.href) || "#";
+  const fallback = DEFAULT_SITE.socialLinks.find((entry) => entry.label === label);
+
+  return {
+    label,
+    href: isPlaceholderSocialHref(label, href) ? fallback?.href || href : href
+  };
+}
+
+function isPlaceholderSocialHref(label, href) {
+  if (!href) {
+    return true;
+  }
+
+  if (label === "GitHub" && href === "https://github.com/your-name") {
+    return true;
+  }
+
+  if (label === "X / Twitter" && href === "https://x.com/your-name") {
+    return true;
+  }
+
+  if (label === "Email" && href === "mailto:hello@example.com") {
+    return true;
+  }
+
+  return false;
 }
 
 function buildPostFromForm(form, posts, existingPost = null) {
