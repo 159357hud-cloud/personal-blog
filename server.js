@@ -31,6 +31,16 @@ const SUPABASE_SERVICE_ROLE_KEY = String(process.env.SUPABASE_SERVICE_ROLE_KEY |
 const SUPABASE_POSTS_TABLE = String(process.env.SUPABASE_POSTS_TABLE || "posts").trim();
 const SUPABASE_SITE_TABLE = String(process.env.SUPABASE_SITE_TABLE || "site_content").trim();
 const DATA_PROVIDER = resolveDataProvider(process.env.DATA_PROVIDER, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+const STORAGE_MAX_ATTEMPTS = DATA_PROVIDER === "supabase" ? 20 : 1;
+const STORAGE_RETRY_DELAY_MS = DATA_PROVIDER === "supabase" ? 5000 : 0;
+
+const storageState = {
+  ready: false,
+  inProgress: false,
+  attempts: 0,
+  lastError: null,
+  nextRetryAt: null
+};
 
 const DEFAULT_SITE = {
   siteName: "北岸手记",
@@ -147,7 +157,7 @@ const server = http.createServer(async (req, res) => {
 bootstrap();
 
 async function bootstrap() {
-  await ensureStorage();
+  startStorageInitialization();
   server.listen(PORT, HOST, () => {
     console.log(
       `Dynamic blog is running on http://${HOST === "0.0.0.0" ? "localhost" : HOST}:${PORT} (${DATA_PROVIDER} storage)`
@@ -158,6 +168,50 @@ async function bootstrap() {
 async function routeRequest(req, res) {
   const requestUrl = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
   const pathname = decodeURIComponent(requestUrl.pathname);
+
+  if (req.method === "GET" && pathname === "/healthz") {
+    sendResponse(
+      res,
+      200,
+      JSON.stringify({
+        status: "ok",
+        provider: DATA_PROVIDER,
+        storageReady: storageState.ready,
+        attempts: storageState.attempts,
+        lastError: storageState.lastError ? storageState.lastError.message : null
+      }),
+      "application/json; charset=utf-8"
+    );
+    return;
+  }
+
+  if (!storageState.ready) {
+    startStorageInitialization();
+
+    const site = DEFAULT_SITE;
+    sendHtml(
+      res,
+      503,
+      renderSimplePage(
+        site,
+        `${site.siteName} | 正在启动`,
+        `
+          <main class="page-shell">
+            <section class="panel empty-state">
+              <strong>网站正在连接数据服务，请稍后刷新。</strong>
+              <p>当前存储模式：${escapeHtml(DATA_PROVIDER)}，启动尝试次数：${storageState.attempts}</p>
+              ${
+                storageState.lastError
+                  ? `<p>最近一次错误：${escapeHtml(storageState.lastError.message)}</p>`
+                  : "<p>服务已经启动，正在完成最后的初始化。</p>"
+              }
+            </section>
+          </main>
+        `
+      )
+    );
+    return;
+  }
 
   if (req.method === "GET" && pathname === "/favicon.ico") {
     sendResponse(res, 204, "", "text/plain; charset=utf-8");
@@ -470,6 +524,52 @@ function loadEnvFile() {
       process.env[key] = value;
     }
   }
+}
+
+function startStorageInitialization() {
+  if (storageState.ready || storageState.inProgress) {
+    return;
+  }
+
+  storageState.inProgress = true;
+  void initializeStorageWithRetry();
+}
+
+async function initializeStorageWithRetry() {
+  while (!storageState.ready && storageState.attempts < STORAGE_MAX_ATTEMPTS) {
+    storageState.attempts += 1;
+
+    try {
+      await ensureStorage();
+      storageState.ready = true;
+      storageState.lastError = null;
+      storageState.nextRetryAt = null;
+      console.log(`Storage initialized successfully on attempt ${storageState.attempts}.`);
+      break;
+    } catch (error) {
+      storageState.lastError = error;
+      storageState.nextRetryAt =
+        STORAGE_RETRY_DELAY_MS > 0 ? new Date(Date.now() + STORAGE_RETRY_DELAY_MS).toISOString() : null;
+
+      console.error(
+        `Storage initialization attempt ${storageState.attempts} failed: ${
+          error && error.message ? error.message : String(error)
+        }`
+      );
+
+      if (storageState.attempts >= STORAGE_MAX_ATTEMPTS || STORAGE_RETRY_DELAY_MS === 0) {
+        break;
+      }
+
+      await delay(STORAGE_RETRY_DELAY_MS);
+    }
+  }
+
+  storageState.inProgress = false;
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function ensureStorage() {
