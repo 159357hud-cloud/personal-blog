@@ -45,8 +45,8 @@ const storageState = {
 
 const DEFAULT_SITE = {
   siteName: "自由人生行",
-  tagline: "把产品、生活与创作慢慢写成自己的节奏。",
-  intro: "这里是我的个人网站。我会在这里记录工作复盘、项目随笔、阅读感受，以及那些值得留住的小想法。",
+  tagline: "在自由里寻找方向，在人生里确认价值。",
+  intro: "这里是我记录自由、选择、成长与人生价值的地方。我会在这里写下那些真正重要的问题，以及我对生活方式和自我实现的思考。",
   author: {
     name: "林见",
     role: "独立开发者 / 视觉设计师",
@@ -826,8 +826,8 @@ function normalizeSite(rawSite) {
 
   return {
     siteName: normalizeSiteName(site.siteName) || DEFAULT_SITE.siteName,
-    tagline: normalizeText(site.tagline) || DEFAULT_SITE.tagline,
-    intro: normalizeText(site.intro) || DEFAULT_SITE.intro,
+    tagline: normalizeSiteTagline(site.tagline) || DEFAULT_SITE.tagline,
+    intro: normalizeSiteIntro(site.intro) || DEFAULT_SITE.intro,
     author: {
       name: normalizeText(site.author?.name) || DEFAULT_SITE.author.name,
       role: normalizeText(site.author?.role) || DEFAULT_SITE.author.role,
@@ -893,6 +893,28 @@ function normalizeSiteName(value) {
   }
 
   return siteName === "北岸手记" ? DEFAULT_SITE.siteName : siteName;
+}
+
+function normalizeSiteTagline(value) {
+  const tagline = normalizeText(value);
+
+  if (!tagline) {
+    return DEFAULT_SITE.tagline;
+  }
+
+  return tagline === "把产品、生活与创作慢慢写成自己的节奏。" ? DEFAULT_SITE.tagline : tagline;
+}
+
+function normalizeSiteIntro(value) {
+  const intro = normalizeText(value);
+
+  if (!intro) {
+    return DEFAULT_SITE.intro;
+  }
+
+  return intro === "这里是我的个人网站。我会在这里记录工作复盘、项目随笔、阅读感受，以及那些值得留住的小想法。"
+    ? DEFAULT_SITE.intro
+    : intro;
 }
 
 function getBrandGlyph(value) {
