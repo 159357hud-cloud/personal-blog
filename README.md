@@ -1,3 +1,4 @@
+Made by Codex, a demo.
 # 动态个人博客
 
 这是一个带后台的个人博客，支持：
@@ -7,7 +8,7 @@
 - 文章新增、编辑、删除、发布与取消发布
 - 两种存储模式
   - 本地 JSON：适合本地开发或有持久磁盘的服务器
-  - Supabase：适合免费部署，不依赖本地磁盘
+  - Supabase：免费部署，不依赖本地磁盘
 
 ## 本地启动
 
@@ -52,7 +53,7 @@ DATA_DIR=./data
 
 ### 2. Supabase 模式
 
-如果你想走免费部署路线，推荐把数据存到 Supabase。
+数据存到 Supabase，同步备份本地。
 
 环境变量示例：
 
@@ -77,8 +78,6 @@ SUPABASE_SITE_TABLE=site_content
 - `SUPABASE_SERVICE_ROLE_KEY` 只能放在服务端环境变量里，不要暴露到前端
 
 ## Render 部署
-
-### 免费部署友好版
 
 推荐：
 
@@ -110,10 +109,6 @@ SUPABASE_SITE_TABLE=site_content
 ```
 
 这种模式下不需要挂磁盘。
-
-### 付费持久磁盘版
-
-如果你后面想切回本地文件持久化方案，可以参考 `render.paid.yaml`。
 
 ## 文件说明
 
