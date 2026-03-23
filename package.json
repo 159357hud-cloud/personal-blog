@@ -5,6 +5,7 @@
   "description": "A dynamic personal blog with an admin dashboard powered by Node.js built-ins.",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "test": "node --test"
   }
 }
