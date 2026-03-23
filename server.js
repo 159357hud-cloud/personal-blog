@@ -1,4 +1,5 @@
 const http = require("node:http");
+const https = require("node:https");
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
@@ -178,10 +179,20 @@ async function routeRequest(req, res) {
         provider: DATA_PROVIDER,
         storageReady: storageState.ready,
         attempts: storageState.attempts,
-        lastError: storageState.lastError ? storageState.lastError.message : null
+        lastError: formatErrorMessage(storageState.lastError)
       }),
       "application/json; charset=utf-8"
     );
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/favicon.ico") {
+    sendResponse(res, 204, "", "text/plain; charset=utf-8");
+    return;
+  }
+
+  if (pathname.startsWith("/static/")) {
+    await serveStaticAsset(pathname, res);
     return;
   }
 
@@ -202,7 +213,7 @@ async function routeRequest(req, res) {
               <p>当前存储模式：${escapeHtml(DATA_PROVIDER)}，启动尝试次数：${storageState.attempts}</p>
               ${
                 storageState.lastError
-                  ? `<p>最近一次错误：${escapeHtml(storageState.lastError.message)}</p>`
+                  ? `<p>最近一次错误：${escapeHtml(formatErrorMessage(storageState.lastError))}</p>`
                   : "<p>服务已经启动，正在完成最后的初始化。</p>"
               }
             </section>
@@ -210,16 +221,6 @@ async function routeRequest(req, res) {
         `
       )
     );
-    return;
-  }
-
-  if (req.method === "GET" && pathname === "/favicon.ico") {
-    sendResponse(res, 204, "", "text/plain; charset=utf-8");
-    return;
-  }
-
-  if (pathname.startsWith("/static/")) {
-    await serveStaticAsset(pathname, res);
     return;
   }
 
@@ -719,20 +720,17 @@ async function supabaseRequest(method, resource, body, headers = {}) {
   assertSupabaseConfigured();
 
   const baseUrl = SUPABASE_URL.replace(/\/+$/, "");
-  const response = await fetch(`${baseUrl}/rest/v1/${resource}`, {
+  const targetUrl = new URL(`${baseUrl}/rest/v1/${resource}`);
+  const payload = body === undefined ? undefined : JSON.stringify(body);
+  const response = await sendHttpsRequest(targetUrl, {
     method,
-    headers: {
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-      ...headers
-    },
-    body: body === undefined ? undefined : JSON.stringify(body)
+    headers: buildSupabaseHeaders(body !== undefined, headers),
+    body: payload
   });
+  const text = response.text;
 
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(`Supabase request failed (${response.status}): ${text || response.statusText}`);
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    throw new Error(`Supabase request failed (${response.statusCode}): ${text || response.statusMessage}`);
   }
 
   if (!text) {
@@ -750,6 +748,77 @@ function assertSupabaseConfigured() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     throw new Error("Supabase storage is enabled, but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing.");
   }
+}
+
+function buildSupabaseHeaders(hasBody, extraHeaders = {}) {
+  const resolvedHeaders = {
+    apikey: SUPABASE_SERVICE_ROLE_KEY,
+    ...(hasBody ? { "Content-Type": "application/json" } : {}),
+    ...extraHeaders
+  };
+
+  if (!SUPABASE_SERVICE_ROLE_KEY.startsWith("sb_")) {
+    resolvedHeaders.Authorization = `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`;
+  }
+
+  return resolvedHeaders;
+}
+
+async function sendHttpsRequest(targetUrl, options) {
+  return new Promise((resolve, reject) => {
+    const request = https.request(
+      {
+        protocol: targetUrl.protocol,
+        hostname: targetUrl.hostname,
+        port: targetUrl.port || 443,
+        path: `${targetUrl.pathname}${targetUrl.search}`,
+        method: options.method,
+        headers: options.headers,
+        family: 4,
+        timeout: 15000
+      },
+      (response) => {
+        const chunks = [];
+
+        response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        response.on("end", () => {
+          resolve({
+            statusCode: response.statusCode || 0,
+            statusMessage: response.statusMessage || "",
+            text: Buffer.concat(chunks).toString("utf8")
+          });
+        });
+      }
+    );
+
+    request.on("timeout", () => {
+      request.destroy(new Error(`HTTPS request timed out for ${targetUrl.hostname}`));
+    });
+
+    request.on("error", (error) => {
+      reject(new Error(`HTTPS request failed for ${targetUrl.hostname}: ${error.message}`, { cause: error }));
+    });
+
+    if (options.body) {
+      request.write(options.body);
+    }
+
+    request.end();
+  });
+}
+
+function formatErrorMessage(error) {
+  if (!error) {
+    return "";
+  }
+
+  const parts = [error.message];
+
+  if (error.cause && error.cause.message && error.cause.message !== error.message) {
+    parts.push(error.cause.message);
+  }
+
+  return parts.filter(Boolean).join(" | ");
 }
 
 function normalizeSite(rawSite) {
