@@ -44,7 +44,7 @@ const storageState = {
 };
 
 const DEFAULT_SITE = {
-  siteName: "北岸手记",
+  siteName: "自由人生行",
   tagline: "把产品、生活与创作慢慢写成自己的节奏。",
   intro: "这里是我的个人网站。我会在这里记录工作复盘、项目随笔、阅读感受，以及那些值得留住的小想法。",
   author: {
@@ -825,7 +825,7 @@ function normalizeSite(rawSite) {
   const site = rawSite && typeof rawSite === "object" ? rawSite : {};
 
   return {
-    siteName: normalizeText(site.siteName) || DEFAULT_SITE.siteName,
+    siteName: normalizeSiteName(site.siteName) || DEFAULT_SITE.siteName,
     tagline: normalizeText(site.tagline) || DEFAULT_SITE.tagline,
     intro: normalizeText(site.intro) || DEFAULT_SITE.intro,
     author: {
@@ -883,6 +883,21 @@ function isPlaceholderSocialHref(label, href) {
   }
 
   return false;
+}
+
+function normalizeSiteName(value) {
+  const siteName = normalizeText(value);
+
+  if (!siteName) {
+    return DEFAULT_SITE.siteName;
+  }
+
+  return siteName === "北岸手记" ? DEFAULT_SITE.siteName : siteName;
+}
+
+function getBrandGlyph(value) {
+  const text = normalizeText(value) || DEFAULT_SITE.siteName;
+  return Array.from(text)[0] || "自";
 }
 
 function buildPostFromForm(form, posts, existingPost = null) {
@@ -1833,7 +1848,7 @@ function renderSimplePage(site, title, body, bodyClass = "") {
   <header class="site-header">
     <div class="site-header-inner">
       <a class="brand-mark" href="/">
-        <span class="brand-dot">北</span>
+        <span class="brand-dot">${escapeHtml(getBrandGlyph(site.siteName))}</span>
         <span class="brand-copy">
           <strong>${escapeHtml(site.siteName)}</strong>
           <span>${escapeHtml(site.tagline)}</span>
